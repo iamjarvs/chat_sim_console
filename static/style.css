@@ -163,7 +163,8 @@ button{font-family:inherit;}
 .chip-row{display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;}
 .chip{
   background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim);font-size:0.78rem;
-  padding:0.4rem 0.8rem;border-radius:999px;cursor:pointer;transition:border-color .15s,color .15s,background .15s;white-space:nowrap;
+  padding:0.4rem 0.8rem;border-radius:999px;cursor:pointer;transition:border-color .15s,color .15s,background .15s;
+  max-width:100%;text-align:left;
 }
 .chip:hover{border-color:var(--coral);color:var(--text);background:var(--coral-wash);}
 
