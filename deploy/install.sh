@@ -52,6 +52,17 @@ fi
 chmod 600 "$CONFIG_DIR/config.json"
 unset OPERATOR_PASS
 
+python3 - "$CONFIG_DIR/config.json" <<'PYEOF'
+import json, sys
+data = json.load(open(sys.argv[1]))
+if not data.get("netris_configured"):
+    print("WARNING: Netris isn't configured on the Portal yet (see its /ops page) — "
+          "the console will show 'Unknown' for environment until it is.", file=sys.stderr)
+if not data.get("ssh_configured"):
+    print("WARNING: the SSH jump host isn't configured on the Portal yet (see its /ops page) — "
+          "the console won't be able to resolve its own Netris server name until it is.", file=sys.stderr)
+PYEOF
+
 echo "==> Fetching code"
 if [ -d "$INSTALL_DIR/.git" ]; then
   git -C "$INSTALL_DIR" fetch --depth 1 origin
