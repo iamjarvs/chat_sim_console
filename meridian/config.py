@@ -1,7 +1,10 @@
-"""Loads the config.json that install.sh writes from the Portal's
-/ops/api/device-credentials response. Missing entirely (e.g. running the
-app straight from a checkout for local development) falls back to a demo
-config rather than refusing to start.
+"""Loads the static context.json a deploy pushes onto this specific host.
+
+No live Netris/SSH calls happen here on purpose: this fleet's compute nodes
+have no outbound network path to either the Netris controller or the jump
+host (confirmed by hand against a real host — see deploy_tools/ for where
+that resolution actually happens instead, once, at push time, from the jump
+host, which does have the connectivity this box doesn't).
 """
 from __future__ import annotations
 
@@ -12,62 +15,43 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("meridian.config")
 
-DEFAULT_CONFIG_PATH = "/etc/meridian-console/config.json"
+DEFAULT_CONTEXT_PATH = "/etc/meridian-console/context.json"
 
 
 @dataclass(frozen=True)
-class Config:
-    netris_base_url: str | None
-    netris_username: str | None
-    netris_password: str | None
-    netris_verify_ssl: bool
-    ssh_jump_host: str | None
-    ssh_jump_port: int
-    ssh_jump_username: str | None
-    ssh_jump_password: str | None
-    tenant_display_name: str
+class StaticContext:
+    tenant_name: str
+    environment_name: str
+    host_label: str
     gpus_per_server: int
 
 
-def _demo_config() -> Config:
-    return Config(
-        netris_base_url=None,
-        netris_username=None,
-        netris_password=None,
-        netris_verify_ssl=True,
-        ssh_jump_host=None,
-        ssh_jump_port=22,
-        ssh_jump_username=None,
-        ssh_jump_password=None,
-        tenant_display_name="Demo Tenant",
+def _demo_context() -> StaticContext:
+    return StaticContext(
+        tenant_name="Demo Tenant",
+        environment_name="Unknown",
+        host_label="local-dev",
         gpus_per_server=8,
     )
 
 
-def load_config() -> Config:
-    path = os.environ.get("MERIDIAN_CONFIG", DEFAULT_CONFIG_PATH)
+def load_static_context() -> StaticContext:
+    path = os.environ.get("MERIDIAN_CONTEXT", DEFAULT_CONTEXT_PATH)
     if not os.path.exists(path):
-        return _demo_config()
+        return _demo_context()
 
     try:
         with open(path) as f:
             data = json.load(f)
     except (OSError, ValueError):
-        # A truncated/corrupt file (e.g. disk full mid-install) must not
-        # crash the process at import time — fall back the same as if the
-        # file were simply missing.
-        logger.exception("Could not read/parse %s, starting in demo-config fallback", path)
-        return _demo_config()
+        # A truncated/corrupt file must not crash the process at import
+        # time — fall back the same as if the file were simply missing.
+        logger.exception("Could not read/parse %s, starting in demo fallback", path)
+        return _demo_context()
 
-    return Config(
-        netris_base_url=data.get("netris_base_url"),
-        netris_username=data.get("netris_username"),
-        netris_password=data.get("netris_password"),
-        netris_verify_ssl=bool(data.get("netris_verify_ssl", True)),
-        ssh_jump_host=data.get("ssh_jump_host"),
-        ssh_jump_port=int(data.get("ssh_jump_port") or 22),
-        ssh_jump_username=data.get("ssh_jump_username"),
-        ssh_jump_password=data.get("ssh_jump_password"),
-        tenant_display_name=data.get("tenant_display_name") or "Demo Tenant",
+    return StaticContext(
+        tenant_name=data.get("tenant_name") or "Demo Tenant",
+        environment_name=data.get("environment_name") or "Unknown",
+        host_label=data.get("host_label") or "unknown-host",
         gpus_per_server=int(data.get("gpus_per_server") or 8),
     )

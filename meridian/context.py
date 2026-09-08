@@ -1,24 +1,22 @@
-"""Resolves and caches what the console shows in its header: tenant name,
-environment name, this host's Netris identity, and GPU inventory.
+"""Caches what the console shows in its header.
 
-Resolved once at startup (in the constructor, so the very first request
-already has real data if the network cooperates) and then refreshed on a
-background thread — never inline in a request, since Netris/SSH calls can
-be slow or briefly unreachable and the demo must keep rendering regardless.
-Any failure here is logged and falls back to the last-known-good state,
-never raised past this module.
+Tenant/environment/host label are baked once into context.json by the push
+deploy (see deploy_tools/) and never re-fetched over the network from here
+— this fleet's compute nodes have no outbound path to Netris or the jump
+host. The only thing ever re-checked live is GPU count/model via a local
+`nvidia-smi` call, which needs no network at all. The refresh loop still
+re-reads context.json from disk periodically, so an operator can push an
+updated context (e.g. the environment changed) and have it picked up
+without restarting the service.
 """
 from __future__ import annotations
 
 import logging
-import socket
 import threading
 import time
 
 from meridian import gpu_detect
-from meridian.config import Config
-from meridian.netris_client import NetrisClient
-from meridian.ssh_alias import resolve_own_server_name
+from meridian.config import StaticContext, load_static_context
 
 logger = logging.getLogger("meridian.context")
 
@@ -26,84 +24,31 @@ REFRESH_SECONDS = 300
 
 
 class ConsoleContext:
-    def __init__(self, config: Config):
-        self.config = config
+    def __init__(self, static_context: StaticContext):
+        self.static_context = static_context
         self._lock = threading.Lock()
-        self._state = self._base_state()
-        try:
-            self._resolve_once()
-        except Exception:
-            # Must never take the whole process down before it can even
-            # start serving — worst case the console just starts in its
-            # base/fallback state and the background loop retries later.
-            logger.exception("Initial context resolution failed, starting in fallback state")
+        self._state = self._build_state()
         threading.Thread(target=self._refresh_loop, daemon=True, name="meridian-context-refresh").start()
 
-    def _base_state(self) -> dict:
+    def _build_state(self) -> dict:
         gpus = gpu_detect.detect_gpus()
         return {
-            "tenant_name": self.config.tenant_display_name,
-            "environment_name": "Resolving…",
-            "host_label": socket.gethostname(),
-            "gpu_count": len(gpus) if gpus else self.config.gpus_per_server,
+            "tenant_name": self.static_context.tenant_name,
+            "environment_name": self.static_context.environment_name,
+            "host_label": self.static_context.host_label,
+            "gpu_count": len(gpus) if gpus else self.static_context.gpus_per_server,
             "gpu_model": gpus[0]["name"] if gpus else "Simulated GPU",
-            "resolved": False,
+            "resolved": True,
         }
-
-    def _resolve_once(self) -> None:
-        with self._lock:
-            state = dict(self._state)
-
-        gpus = gpu_detect.detect_gpus()
-        if gpus:
-            state["gpu_count"] = len(gpus)
-            state["gpu_model"] = gpus[0]["name"]
-
-        server_name = None
-        if self.config.ssh_jump_host and self.config.ssh_jump_username:
-            try:
-                server_name = resolve_own_server_name(
-                    self.config.ssh_jump_host,
-                    self.config.ssh_jump_port,
-                    self.config.ssh_jump_username,
-                    self.config.ssh_jump_password,
-                )
-            except Exception:
-                logger.warning("Could not resolve this host's Netris server name", exc_info=True)
-
-        if server_name:
-            state["host_label"] = server_name
-            if self.config.netris_base_url and self.config.netris_username:
-                try:
-                    client = NetrisClient(
-                        self.config.netris_base_url,
-                        self.config.netris_username,
-                        self.config.netris_password,
-                        self.config.netris_verify_ssl,
-                    )
-                    client.login()
-                    env_name = client.find_environment_for_server(server_name)
-                    state["environment_name"] = env_name or "Unassigned"
-                    state["resolved"] = True
-                except Exception:
-                    # Broad on purpose: a non-JSON response (proxy/maintenance
-                    # page, expired session) raises requests' JSONDecodeError,
-                    # not NetrisError — this must never escape and crash the
-                    # process before it can start serving.
-                    logger.warning("Netris lookup failed", exc_info=True)
-                    if not state["resolved"]:
-                        state["environment_name"] = "Unavailable"
-        elif not state["resolved"]:
-            state["environment_name"] = "Unknown"
-
-        with self._lock:
-            self._state = state
 
     def _refresh_loop(self) -> None:
         while True:
             time.sleep(REFRESH_SECONDS)
             try:
-                self._resolve_once()
+                self.static_context = load_static_context()
+                state = self._build_state()
+                with self._lock:
+                    self._state = state
             except Exception:
                 logger.exception("Context refresh failed, keeping last known state")
 

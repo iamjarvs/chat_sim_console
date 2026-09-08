@@ -8,75 +8,84 @@ answer — but every response is canned, generic business Q&A. Nothing here
 calls a real model.
 
 What makes it worth deploying on real compute hosts: the header bar shows
-**real** context resolved on that specific box — which tenant and Netris
-environment it currently belongs to, and which physical GPU (out of however
-many `nvidia-smi` reports) is "serving" the current answer, chosen at random
-each turn and highlighted in the GPU rail.
+**real** context for that specific box — which tenant and Netris environment
+it currently belongs to, and which physical GPU (out of however many
+`nvidia-smi` reports) is "serving" the current answer, chosen at random each
+turn and highlighted in the GPU rail.
 
-## How it resolves context
+## Why this is a push deploy, not a `git clone` on each host
 
-1. At startup (and every 5 minutes after), it SSHes to the Netris jump host
-   and resolves this box's own `hgx-podNN-suXX-hYY`-style Netris server name
-   by matching the jump host's alias table against this host's own local
-   IPs — the same alias table
-   [Provider Portal's `ssh_client.py`](../Provider-Portal/app/ssh_client.py)
-   already parses for its own SSH automation.
-2. It logs into the Netris controller directly and looks up which cluster
-   that server currently belongs to — the cluster's name **is** the
-   Provider Portal's environment name (confirmed: the Portal sets a
-   cluster's Netris name to its own `environments.netris_name` on create).
-3. GPU count and model come from `nvidia-smi` on this box; the tenant name
-   comes from Provider Portal's `tenant_display_name` setting.
-4. Any step that fails (no network path to the jump host, Netris
-   unreachable, no `nvidia-smi`) falls back gracefully — the console always
-   renders, worst case with a generic "Unknown" label instead of crashing
-   mid-demo.
+The original design had each compute host pull its own code and resolve its
+own context live. Tested against a real fleet host (`hgx-pod00-su0-h00`) and
+that doesn't hold up:
 
-## Installing on a compute host
+- **No outbound internet at all** from compute nodes — GitHub, PyPI, and the
+  Caddy apt repo are all unreachable. `apt-get update` fails outright.
+- **No `pip`, no `python3-venv`** on the node, and no way to install them.
+- **No outbound path back to the Netris controller or the jump host either**
+  — a compute node can only be reached *inbound*, by the jump host dialing
+  in via its own trusted key (the same `hgx-*` alias mechanism the Portal's
+  own `ssh_client.py` already uses).
 
-Requires a Debian/Ubuntu host with root access, and the Provider Portal's
-operator username/password (the same one that gates `/ops`).
+What a compute node *does* have: Python 3 stdlib, `openssl`, and enough to
+run a plain HTTP(S) server locally.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/iamjarvs/chat_sim_console/main/deploy/install.sh -o install.sh
-sudo bash install.sh https://your-portal.example.com
-```
+So instead: build once somewhere with real connectivity (the Netris
+controller box doubles as this fleet's jump host, and has full internet
+access), resolve each host's tenant/environment there — it has direct access
+to the Netris API and to the SSH alias table — and push a ready-to-run
+bundle to the compute node over the same inbound SSH path that already
+works. The console itself becomes a small Flask app with **zero network
+calls of its own**, TLS served directly via a self-signed cert generated at
+push time (no Caddy — installing it needs the apt repo the node can't
+reach).
 
-You'll be prompted for the operator username/password if you don't pass them
-as extra arguments or set `$OPERATOR_USERNAME` / `$OPERATOR_PASSWORD`. This
-one-time fetch pulls the actual Netris + SSH jump-host credentials from the
-Portal's `/ops/api/device-credentials` endpoint and stores them at
-`/etc/meridian-console/config.json` (mode 600) — nothing else touches this
-host afterwards.
+## Deploying to a host
 
-The console then runs as the `meridian-console` systemd service behind Caddy
-on port 443, with a self-signed certificate (Caddy's `tls internal`) — your
-browser will warn once on first visit, which is expected for an internal
-demo box.
-
-Re-running `install.sh` is safe: it re-pulls the code and credentials and
-restarts the service, so it doubles as the update path.
-
-By default it clones over SSH (`git@github.com:...`), which needs a deploy
-key or forwarded SSH agent already trusted for GitHub on every fresh host.
-If your hosts don't have that set up, override with an HTTPS URL (with a
-token baked in, for a private repo) instead:
+Run this **from the Netris controller / jump host**, not from the compute
+node itself:
 
 ```bash
-sudo MERIDIAN_REPO_URL="https://<token>@github.com/iamjarvs/chat_sim_console.git" \
-  bash install.sh https://your-portal.example.com
+git clone https://github.com/iamjarvs/chat_sim_console.git
+cd chat_sim_console
+bash deploy_tools/push_to_host.sh hgx-pod00-su0-h00 https://your-portal.example.com
 ```
 
-## Uninstalling
+You'll be prompted for the Portal's operator username/password if you don't
+pass them as extra arguments or set `$OPERATOR_USERNAME`/`$OPERATOR_PASSWORD`
+— this fetches real Netris + SSH credentials once from the Portal's
+`/ops/api/device-credentials` endpoint, resolves that specific server's
+tenant/environment against the live Netris controller, and pushes the app +
+a self-signed cert + that resolved context to the node.
+
+No reachable Portal yet? Provide Netris credentials directly instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iamjarvs/chat_sim_console/main/deploy/uninstall.sh -o uninstall.sh
-sudo bash uninstall.sh
+NETRIS_BASE_URL=https://your-netris-controller \
+NETRIS_USERNAME=netris \
+NETRIS_PASSWORD=... \
+TENANT_DISPLAY_NAME="ACME Corp" \
+GPUS_PER_SERVER=8 \
+  bash deploy_tools/push_to_host.sh hgx-pod00-su0-h00
 ```
 
-Stops and removes the systemd service, the Caddy site block, the code
-checkout, and the pulled credentials. Leaves Caddy itself installed (in case
-anything else on the box uses it).
+Re-running the script for the same host is safe (rebuilds and re-pushes in
+place); the admin venv, app venv, and self-signed cert are all cached under
+`~/.cache/meridian-console-*` and reused across hosts, so pushing to a
+second host is fast.
+
+The console then runs as the `meridian-console` systemd service on the
+target, listening on `0.0.0.0:443` directly (no reverse proxy) — visit
+`https://<that host's IP>`. Your browser will warn once on first visit,
+which is expected for a self-signed cert.
+
+## Uninstalling from a host
+
+```bash
+bash deploy_tools/uninstall_host.sh hgx-pod00-su0-h00
+```
+
+Stops and disables the systemd service and deletes the code + context file.
 
 ## Local development
 
@@ -85,25 +94,24 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python server.py
 ```
 
-Without `/etc/meridian-console/config.json` present (or `$MERIDIAN_CONFIG`
-pointing elsewhere), it falls back to a demo config — "Demo Tenant", 8
-simulated GPUs, no real Netris/SSH lookups attempted — so the UI is fully
-usable on a laptop with no Netris controller in reach. Copy
-`config.example.json` and point `MERIDIAN_CONFIG` at it to test against a
-real controller instead.
+Without `/etc/meridian-console/context.json` present (or `$MERIDIAN_CONTEXT`
+pointing elsewhere), it falls back to a demo context — "Demo Tenant", 8
+simulated GPUs — so the UI is fully usable on a laptop with nothing else set
+up. `MERIDIAN_PORT` defaults to 8765 without TLS unless
+`$MERIDIAN_TLS_CERT`/`$MERIDIAN_TLS_KEY` are also set.
 
 ## Repo layout
 
 ```
-server.py            Flask entrypoint — serves static/ and GET /api/context
+server.py            Flask entrypoint — binds 0.0.0.0, serves static/ and GET /api/context
 meridian/
-  config.py           Loads /etc/meridian-console/config.json
-  netris_client.py     Minimal read-only Netris client (login + list servers/clusters)
-  ssh_alias.py          Resolves this host's own Netris server name via the jump host
-  gpu_detect.py         nvidia-smi wrapper with a graceful fallback
-  context.py            Ties the above together, caches, refreshes on a timer
+  config.py            Loads the static context.json a deploy baked onto this host
+  context.py            Caches header state; only nvidia-smi is ever checked live (no network)
+  gpu_detect.py          nvidia-smi wrapper with a graceful fallback
 static/               The chat UI (plain HTML/CSS/JS, no build step)
-deploy/
-  install.sh            Fleet install: fetch credentials, pull code, Caddy + systemd
-  uninstall.sh           Reverses install.sh
+deploy_tools/
+  push_to_host.sh        Run from the jump host: resolve context, build, push, start
+  uninstall_host.sh       Reverses push_to_host.sh for one host
+  resolve_context.py      Looks up a server's tenant/environment against live Netris
+  netris_client.py        Minimal read-only Netris client (login + list servers/clusters)
 ```
