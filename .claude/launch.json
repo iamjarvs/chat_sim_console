@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "meridian",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/adam/Documents/Coding/ChatSim && MERIDIAN_PORT=8765 /Users/adam/Documents/Coding/ChatSim/.venv/bin/python server.py"],
+      "port": 8765
+    }
+  ]
+}
