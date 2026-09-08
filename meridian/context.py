@@ -17,7 +17,7 @@ import time
 
 from meridian import gpu_detect
 from meridian.config import Config
-from meridian.netris_client import NetrisClient, NetrisError
+from meridian.netris_client import NetrisClient
 from meridian.ssh_alias import resolve_own_server_name
 
 logger = logging.getLogger("meridian.context")
@@ -30,7 +30,13 @@ class ConsoleContext:
         self.config = config
         self._lock = threading.Lock()
         self._state = self._base_state()
-        self._resolve_once()
+        try:
+            self._resolve_once()
+        except Exception:
+            # Must never take the whole process down before it can even
+            # start serving — worst case the console just starts in its
+            # base/fallback state and the background loop retries later.
+            logger.exception("Initial context resolution failed, starting in fallback state")
         threading.Thread(target=self._refresh_loop, daemon=True, name="meridian-context-refresh").start()
 
     def _base_state(self) -> dict:
@@ -79,7 +85,11 @@ class ConsoleContext:
                     env_name = client.find_environment_for_server(server_name)
                     state["environment_name"] = env_name or "Unassigned"
                     state["resolved"] = True
-                except NetrisError:
+                except Exception:
+                    # Broad on purpose: a non-JSON response (proxy/maintenance
+                    # page, expired session) raises requests' JSONDecodeError,
+                    # not NetrisError — this must never escape and crash the
+                    # process before it can start serving.
                     logger.warning("Netris lookup failed", exc_info=True)
                     if not state["resolved"]:
                         state["environment_name"] = "Unavailable"

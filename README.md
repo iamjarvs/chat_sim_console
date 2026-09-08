@@ -57,6 +57,16 @@ demo box.
 Re-running `install.sh` is safe: it re-pulls the code and credentials and
 restarts the service, so it doubles as the update path.
 
+By default it clones over SSH (`git@github.com:...`), which needs a deploy
+key or forwarded SSH agent already trusted for GitHub on every fresh host.
+If your hosts don't have that set up, override with an HTTPS URL (with a
+token baked in, for a private repo) instead:
+
+```bash
+sudo MERIDIAN_REPO_URL="https://<token>@github.com/iamjarvs/chat_sim_console.git" \
+  bash install.sh https://your-portal.example.com
+```
+
 ## Uninstalling
 
 ```bash

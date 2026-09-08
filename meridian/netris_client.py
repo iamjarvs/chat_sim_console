@@ -39,17 +39,27 @@ class NetrisClient:
         if resp.status_code >= 400:
             raise NetrisError(f"Netris login failed (HTTP {resp.status_code})")
 
-    def list_servers(self) -> list[dict]:
-        resp = self.session.get(f"{self.base_url}/api/v2/server-cluster/servers", timeout=15)
+    def _get_json(self, path: str, action: str) -> dict:
+        try:
+            resp = self.session.get(f"{self.base_url}{path}", timeout=15)
+        except requests.RequestException as exc:
+            raise NetrisError(f"{action} failed: could not reach Netris controller: {exc}") from exc
         if resp.status_code >= 400:
-            raise NetrisError(f"List servers failed (HTTP {resp.status_code})")
-        return (resp.json() or {}).get("data") or []
+            raise NetrisError(f"{action} failed (HTTP {resp.status_code})")
+        try:
+            return resp.json() or {}
+        except ValueError as exc:
+            # A reachable-but-wrong endpoint (proxy/maintenance page, expired
+            # session redirected to HTML) still returns 200 with a non-JSON
+            # body — surface that as a NetrisError like every other failure
+            # mode here, instead of letting a raw JSONDecodeError escape.
+            raise NetrisError(f"{action} returned a non-JSON response") from exc
+
+    def list_servers(self) -> list[dict]:
+        return self._get_json("/api/v2/server-cluster/servers", "List servers").get("data") or []
 
     def list_clusters(self) -> list[dict]:
-        resp = self.session.get(f"{self.base_url}/api/v2/server-cluster", timeout=15)
-        if resp.status_code >= 400:
-            raise NetrisError(f"List clusters failed (HTTP {resp.status_code})")
-        return (resp.json() or {}).get("data") or []
+        return self._get_json("/api/v2/server-cluster", "List clusters").get("data") or []
 
     def find_environment_for_server(self, server_name: str) -> str | None:
         """Returns the owning cluster's name (== the Portal's environment

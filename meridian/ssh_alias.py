@@ -26,7 +26,10 @@ def resolve_aliases(host: str, port: int, username: str, password: str | None) -
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(host, port=port, username=username, password=password, timeout=10)
     try:
-        _, stdout, _ = client.exec_command("bash -i -c alias 2>/dev/null")
+        # `timeout` here bounds the *channel* (a stuck `bash -i` waiting on a
+        # banner/motd/tty would otherwise hang the read forever) — the
+        # connect() timeout above only bounds the TCP handshake, not this.
+        _, stdout, _ = client.exec_command("bash -i -c alias 2>/dev/null", timeout=10)
         output = stdout.read().decode(errors="ignore")
     finally:
         client.close()

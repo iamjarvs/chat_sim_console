@@ -6,8 +6,11 @@ config rather than refusing to start.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
+
+logger = logging.getLogger("meridian.config")
 
 DEFAULT_CONFIG_PATH = "/etc/meridian-console/config.json"
 
@@ -46,8 +49,15 @@ def load_config() -> Config:
     if not os.path.exists(path):
         return _demo_config()
 
-    with open(path) as f:
-        data = json.load(f)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        # A truncated/corrupt file (e.g. disk full mid-install) must not
+        # crash the process at import time — fall back the same as if the
+        # file were simply missing.
+        logger.exception("Could not read/parse %s, starting in demo-config fallback", path)
+        return _demo_config()
 
     return Config(
         netris_base_url=data.get("netris_base_url"),
