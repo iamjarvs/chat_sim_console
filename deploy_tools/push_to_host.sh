@@ -26,8 +26,8 @@ OPERATOR_USER="${3:-${OPERATOR_USERNAME:-}}"
 OPERATOR_PASS="${4:-${OPERATOR_PASSWORD:-}}"
 
 echo "==> Resolving ${SERVER_NAME}'s IP from ~/.bash_aliases"
-ALIAS_LINE=$(grep "alias ${SERVER_NAME}=" ~/.bash_aliases || true)
-[ -n "$ALIAS_LINE" ] || { echo "No alias found for '${SERVER_NAME}' in ~/.bash_aliases" >&2; exit 1; }
+ALIAS_LINE=$(bash -i -c alias 2>/dev/null | grep "^alias ${SERVER_NAME}=" || true)
+[ -n "$ALIAS_LINE" ] || { echo "No alias found for '${SERVER_NAME}' (checked \`bash -i -c alias\` — these are generated at interactive shell startup, not a static ~/.bash_aliases line)" >&2; exit 1; }
 TARGET_IP=$(echo "$ALIAS_LINE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
 echo "    ${SERVER_NAME} -> ${TARGET_IP}"
 

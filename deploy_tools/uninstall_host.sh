@@ -8,8 +8,8 @@ SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLeve
 
 SERVER_NAME="${1:?Usage: uninstall_host.sh <server-name>}"
 
-ALIAS_LINE=$(grep "alias ${SERVER_NAME}=" ~/.bash_aliases || true)
-[ -n "$ALIAS_LINE" ] || { echo "No alias found for '${SERVER_NAME}' in ~/.bash_aliases" >&2; exit 1; }
+ALIAS_LINE=$(bash -i -c alias 2>/dev/null | grep "^alias ${SERVER_NAME}=" || true)
+[ -n "$ALIAS_LINE" ] || { echo "No alias found for '${SERVER_NAME}' (checked \`bash -i -c alias\`)" >&2; exit 1; }
 TARGET_IP=$(echo "$ALIAS_LINE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
 echo "==> Uninstalling from ${SERVER_NAME} (${TARGET_IP})"
 
