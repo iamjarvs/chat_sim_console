@@ -85,6 +85,10 @@ button{font-family:inherit;}
   display:flex;align-items:center;gap:1rem;padding:0.75rem 1.4rem;border-bottom:1px solid var(--border);
   background:rgba(18,21,29,0.7);backdrop-filter:blur(6px);flex-shrink:0;
 }
+.sidebar-toggle{
+  display:none;flex-shrink:0;background:none;border:1px solid var(--border);border-radius:8px;
+  color:var(--text-dim);padding:0.4rem;cursor:pointer;
+}
 .topbar-title{font-size:0.86rem;font-weight:600;color:var(--text);white-space:nowrap;}
 .topbar-host{
   font-family:var(--font-mono);font-size:0.72rem;color:var(--text-faint);
@@ -113,7 +117,7 @@ button{font-family:inherit;}
 .chat-inner{max-width:720px;margin:0 auto;padding:1.6rem 1.5rem 2rem;display:flex;flex-direction:column;gap:1.4rem;}
 
 .empty-state{
-  height:100%;min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
   text-align:center;gap:1.2rem;padding:2rem;
 }
 .empty-mark{width:52px;height:52px;opacity:0.9;}
@@ -185,7 +189,21 @@ button{font-family:inherit;}
 .chat-scroll::-webkit-scrollbar-thumb,.chat-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
 .chat-scroll::-webkit-scrollbar-track,.chat-list::-webkit-scrollbar-track{background:transparent;}
 
+.sidebar-backdrop{display:none;}
+
 @media (max-width:760px){
-  .sidebar{position:fixed;left:-280px;z-index:20;height:100%;transition:left .2s;}
+  .sidebar{position:fixed;left:-280px;top:0;z-index:20;height:100%;transition:left .2s;}
+  .sidebar.open{left:0;}
+  .sidebar-toggle{display:flex;}
   .topbar-host{display:none;}
+  .sidebar-backdrop{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:15;
+  }
+  .sidebar-backdrop.open{display:block;}
+
+  /* The GPU rail + status text don't fit next to the title at this width —
+     wrap them onto their own full-width row instead of clipping off-screen. */
+  .topbar{flex-wrap:wrap;row-gap:0.6rem;}
+  .gpu-rail-wrap{margin-left:0;width:100%;justify-content:space-between;}
+  .gpu-status-sub{display:none;}
 }

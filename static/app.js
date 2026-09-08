@@ -103,6 +103,11 @@ const SEED_CHATS = [
 
 let activeChatIndex = null;
 let busy = false;
+// Bumped by every action that changes what the header should show (a new
+// live turn, opening a past chat, "New chat"). A live turn's delayed
+// idle-reset checks this before firing, so it can't clobber a newer action's
+// GPU state if the viewer moved on before the reset delay elapsed.
+let currentTurnId = 0;
 
 const chatListEl = document.getElementById('chatList');
 const chatInnerEl = document.getElementById('chatInner');
@@ -114,6 +119,13 @@ const composerInput = document.getElementById('composerInput');
 const sendBtn = document.getElementById('sendBtn');
 const topbarTitle = document.getElementById('topbarTitle');
 const topbarHost = document.getElementById('topbarHost');
+const sidebarEl = document.querySelector('.sidebar');
+const sidebarBackdropEl = document.getElementById('sidebarBackdrop');
+
+function closeSidebarOnMobile(){
+  sidebarEl.classList.remove('open');
+  sidebarBackdropEl.classList.remove('open');
+}
 
 function initialsFor(name){
   return (name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
@@ -187,29 +199,35 @@ function renderChatList(){
 }
 
 function loadSeedChat(i){
+  currentTurnId++;
   activeChatIndex = i;
   const chat = SEED_CHATS[i];
   topbarTitle.textContent = chat.title;
   chatInnerEl.innerHTML = '';
   renderChatList();
+  // Past chats are historical — show which GPU served them as a label on
+  // the thinking toggle, not as a still-pulsing "live" rail highlight.
+  clearActiveGPU();
   chat.transcript.forEach(turn => {
     if(turn.role === 'user'){
       appendUserBubble(turn.text);
     }else{
-      appendAssistantStatic(turn.answer, turn.thinking);
-      setActiveGPU(turn.gpu);
+      appendAssistantStatic(turn.answer, turn.thinking, turn.gpu);
     }
   });
   renderChips();
   scrollToBottom();
+  closeSidebarOnMobile();
 }
 
 function startNewChat(){
+  currentTurnId++;
   activeChatIndex = null;
   topbarTitle.textContent = 'New chat';
   clearActiveGPU();
   renderChatList();
   renderEmptyState();
+  closeSidebarOnMobile();
 }
 
 function renderEmptyState(){
@@ -267,15 +285,16 @@ function assistantAvatarSVG(){
   </svg>`;
 }
 
-function appendAssistantStatic(paragraphs, thinking){
+function appendAssistantStatic(paragraphs, thinking, gpuIndex){
   const row = document.createElement('div');
   row.className = 'msg msg-assistant';
   const p = paragraphs.map(t => '<p>' + mdToHtml(t) + '</p>').join('');
   const lines = (thinking || []).map(t => '<div class="thinking-line" style="opacity:1"><span class="b">›</span><span>' + t + '</span></div>').join('');
+  const gpuLabel = gpuIndex != null ? (' · served by GPU ' + gpuIndex) : '';
   row.innerHTML = `
     <div class="msg-avatar">${assistantAvatarSVG()}</div>
     <div class="msg-body">
-      <button class="thinking-toggle"><span class="chev">›</span> Thought for 2s</button>
+      <button class="thinking-toggle"><span class="chev">›</span> Thought for 2s${gpuLabel}</button>
       <div class="thinking-block" style="display:none">${lines}</div>
       <div class="msg-bubble">${p}</div>
     </div>`;
@@ -319,6 +338,7 @@ function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
 async function submitMessage(text){
   if(busy || !text.trim()) return;
   busy = true;
+  const turnId = ++currentTurnId;
   sendBtn.disabled = true;
   composerInput.value = '';
   composerInput.style.height = 'auto';
@@ -371,7 +391,7 @@ async function submitMessage(text){
   const elapsedSec = Math.max(1, Math.round((Date.now() - startTime) / 1000));
   const toggle = document.createElement('button');
   toggle.className = 'thinking-toggle';
-  toggle.innerHTML = '<span class="chev">›</span> Thought for ' + elapsedSec + 's';
+  toggle.innerHTML = '<span class="chev">›</span> Thought for ' + elapsedSec + 's · GPU ' + gpuIndex;
   toggle.onclick = () => {
     const opening = thinkEl.style.display === 'none';
     thinkEl.style.display = opening ? 'flex' : 'none';
@@ -407,6 +427,14 @@ async function submitMessage(text){
   busy = false;
   updateSendState();
   scrollToBottom();
+
+  // Settle the rail back to idle a moment after the answer finishes —
+  // inference is done, it shouldn't look "serving" forever. Guarded by
+  // turnId so this can't clobber a newer action (a different chat opened,
+  // "New chat", another message sent) if the viewer moved on first.
+  wait(1200).then(() => {
+    if(turnId === currentTurnId) clearActiveGPU();
+  });
 }
 
 function updateSendState(){
@@ -426,6 +454,11 @@ composerInput.addEventListener('keydown', (e) => {
 });
 sendBtn.addEventListener('click', () => submitMessage(composerInput.value));
 document.getElementById('newChatBtn').addEventListener('click', startNewChat);
+document.getElementById('sidebarToggle').addEventListener('click', () => {
+  sidebarEl.classList.toggle('open');
+  sidebarBackdropEl.classList.toggle('open');
+});
+sidebarBackdropEl.addEventListener('click', closeSidebarOnMobile);
 
 renderChatList();
 renderChips();
